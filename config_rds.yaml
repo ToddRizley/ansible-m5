@@ -1,0 +1,30 @@
+---
+- name: Set hostvars
+  hosts: localhost
+  tasks:
+    - set_fact: rds_endpoint={{rdsDBInstance.endpoint.address}}
+- hosts: ec2hosts
+  name: Configure RDS Instance
+  gather_facts: no
+  user: ec2-user
+  become: yes
+  tasks:
+    - name: Copy file with owner and permissions
+      ansible.builtin.copy:
+        src: ./Config_RDS.sh
+        dest: /home/ec2-user/
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+    - name: Update permissions on shell script
+      shell: "chmod +x Config_RDS.sh"
+    - name: Create Env Var for DB_HOST
+      shell: |
+        export DB_HOST="{{hostvars.localhost.rds_endpoint}}"
+        echo $DB_HOST
+    - name: Run Config Script on EC2 against RDS
+      shell: "./Config_RDS.sh {{hostvars.localhost.rds_endpoint}}"
+   
+    
+    
+

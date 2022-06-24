@@ -1,0 +1,50 @@
+---
+- hosts: localhost
+  gather_facts: no
+  module_defaults:
+    group/aws:
+      region: "us-east-1"
+  tasks:
+    - name: Create NLB Target Group
+      elb_target_group:
+        name: m5-nlb-tg
+        protocol: TCP
+        port: 80
+        vpc_id: "{{ vpc.vpc.id }}"
+        stickiness_type: source_ip
+        stickiness_enabled: false
+        state: present
+      register: m5TargetGroup
+
+    # - name: Get Elastic IP for NLB
+    #   ec2_eip:
+    #     region: us-east-1
+    #     in_vpc: true
+    #     reuse_existing_ip_allowed: true
+    #     state: present
+    #   register: nlbEIP
+
+    - name: Create NLB
+      elb_network_lb:
+        name: ig-nlb-m5
+        scheme: internet-facing
+        subnet_mappings: 
+          - SubnetId: "{{publicSN1.subnet.id}}"
+            AllocationId: eipalloc-03d2b77ae74404917
+        listeners:
+        - Protocol: TCP # Required. The protocol for connections from clients to the load balancer (TCP, TLS, UDP or TCP_UDP) (case-sensitive).
+          Port: 80 # Required. The port on which the load balancer is listening.
+          DefaultActions:
+            - Type: forward # Required. Only 'forward' is accepted at this time
+              TargetGroupName: "{{m5TargetGroup.target_group_name}}" # Required. The name of the target group
+        - Protocol: TLS # Required. The protocol for connections from clients to the load balancer (TCP, TLS, UDP or TCP_UDP) (case-sensitive).
+          Port: 443 # Required. The port on which the load balancer is listening.
+          DefaultActions:
+            - Type: forward # Required. Only 'forward' is accepted at this time
+              TargetGroupName: "{{m5TargetGroup.target_group_name}}" # Required. The name of the target group
+          Certificates:
+            - CertificateArn: arn:aws:acm:us-east-1:588586607752:certificate/459fd6fd-fbcc-4d4f-9790-36f799e9f794
+        state: present
+      register: m5NLB
+
+      ## ROUTE 53 DNS updates for EIP

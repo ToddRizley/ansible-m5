@@ -1,0 +1,25 @@
+---
+- hosts: localhost
+  gather_facts: no
+  module_defaults:
+    group/aws:
+      region: "us-east-1"
+  tasks:
+    - name: Create EC2 Launch Template for ASG
+      ec2_launch_template:
+        name: "lt-m5-ig"
+        image_id: "ami-0022f774911c1d690"
+        key_name: "tqr-auburn-AWS"
+        instance_type: t3.micro
+        iam_instance_profile: image-gallery-server-role
+        user_data: IyEvdXNyL2Jpbi9iYXNoCgpleHBvcnQgSU1BR0VfR0FMTEVSWV9CT09UU1RSQVBfVkVSU0lPTj0iMS4wIgoKYXdzIHMzIGNwIHMzOi8vZWR1LmF1LmNjLmltYWdlLWdhbGxlcnktY29uZmlnLnR6ci9lYzItcHJvZC1sYXRlc3Quc2ggLi8KL3Vzci9iaW4vYmFzaCBlYzItcHJvZC1sYXRlc3Quc2gK
+        network_interfaces:
+          - device_index: 0
+            associate_public_ip_address: yes
+            groups:
+              - "{{postgresTagSG.group_id}}" 
+              - "{{nginxSGM5.group_id}}"
+        tags:
+          Name: asg-nginx-servers-m5
+        state: present
+      register: m5LaunchTemplate

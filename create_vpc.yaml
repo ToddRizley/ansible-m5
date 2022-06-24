@@ -1,0 +1,218 @@
+---
+- hosts: localhost
+  gather_facts: no
+  module_defaults:
+    group/aws:
+      region: "us-east-1"
+  tasks:
+
+    - name: Create VPC
+      ec2_vpc_net:
+        name: M5-Image-Gallery-VPC
+        cidr_block: 10.10.0.0/16
+        tags:
+          Module: 5
+        state: present
+      register: vpc
+
+    - name: Create Public Subnet
+      ec2_vpc_subnet:
+        az: us-east-1a
+        vpc_id: "{{vpc.vpc.id}}"
+        cidr: 10.10.0.0/24 
+        state: present
+        tags:
+          Name: m5-ig-public-sn
+          Module: 5
+      register: publicSN1
+        
+    - name: Create Private Subnet 1
+      ec2_vpc_subnet:
+        az: us-east-1a
+        vpc_id: "{{vpc.vpc.id}}"
+        cidr: 10.10.1.0/24
+        state: present 
+        tags:
+          Name: m5-ig-private-sn-1
+          Module: 5
+      register: privateSN1
+    
+    - name: Create Private Subnet 2
+      ec2_vpc_subnet:
+        az: us-east-1b
+        vpc_id: "{{vpc.vpc.id}}"
+        cidr: 10.10.2.0/24
+        state: present 
+        tags:
+          Name: m5-ig-private-sn-2
+          Module: 5
+      register: privateSN2
+
+    - name: Create Internet Gateway
+      ec2_vpc_igw:
+        vpc_id: "{{vpc.vpc.id}}"
+        tags:
+          Name: M5-IGW
+        state: present
+      register: igw
+
+    - name: Create Public Route Table
+      ec2_vpc_route_table:
+        vpc_id: "{{vpc.vpc.id}}"
+        tags:
+          Name: ig-m5-rt-public-sn
+        subnets:
+          - "{{publicSN1.subnet.id}}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{igw.gateway_id}}"
+        state: present
+
+    - name: Create NAT Gateway
+      ec2_vpc_nat_gateway:
+        subnet_id: "{{publicSN1.subnet.id}}"
+        wait: yes
+        if_exist_do_not_create: true
+        tags:
+          Name: ig-ngw-m5
+        state: present
+      register: natgw
+    
+    - name: Create Private Route Table
+      ec2_vpc_route_table:
+        vpc_id: "{{vpc.vpc.id}}"
+        tags:
+          Name: ig-m5-rt-private-sn
+        subnets:
+          - "{{privateSN1.subnet.id}}"
+          - "{{privateSN2.subnet.id}}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{natgw.nat_gateway_id}}"
+        state: present
+    
+    - name: Create Nginx Server SG
+      ec2_group:
+        name: m5-nginx-sg
+        description: Security group for Nginx instances
+        vpc_id: "{{vpc.vpc.id}}"
+        rules:
+          - proto: tcp
+            ports:
+              - 22
+              - 80
+              - 443
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow traffic to ports 22, 80, 443
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+        state: present
+      register: nginxSGM5
+
+    - name: Create Postgres Tag Security Group
+      ec2_group:
+        name: m5-postgres-tag-sg
+        description: Allow connections with postgres resources
+        vpc_id: "{{vpc.vpc.id}}"
+        rules:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: tcp
+            ports:
+              - 80
+              - 443
+              - 8080
+              - 5432
+            cidr_ip: 10.10.0.0/16
+        state: present
+      register: postgresTagSG
+
+    - name: Create Postgres Security Group
+      ec2_group:
+        name: m5-postgres-sg
+        description: Allow connections from tagged resources
+        vpc_id: "{{vpc.vpc.id}}"
+        rules: 
+          - proto: tcp
+            ports: 
+              - 5432
+              - 8080
+            group_id: "{{ postgresTagSG.group_id }}"
+          - proto: tcp
+            ports:
+              - 443
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+        state: present
+      register: postgresSG
+    
+    - name: Update Postgres Tag Security Group
+      ec2_group:
+        name: m5-postgres-tag-sg
+        description: Allow connections with postgres resources
+        vpc_id: "{{vpc.vpc.id}}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 5432
+            group_id: "{{ postgresSG.group_id }}"
+        rules_egress:
+          - proto: tcp
+            ports: 
+              - 5432
+            group_id: "{{ postgresSG.group_id }}"
+          - proto: tcp
+            ports:
+              - 80
+              - 443
+              - 8080
+            cidr_ip: 10.10.0.0/16
+        state: present
+      register: postgresTagSG
+    
+    - name: "Create public subnet ACL"
+      ec2_vpc_nacl:
+        vpc_id: "{{vpc.vpc.id}}"
+        name: ig-public-acl-m5
+        region: us-east-1
+        subnets: ['m5-ig-public-sn']
+        ingress:
+          # rule no, protocol, allow/deny, cidr, icmp_type, icmp_code,
+          #                                             port from, port to
+          - [100, 'tcp', 'allow', '108.46.136.97/32', null, null, 5000, 5000]
+          - [200, 'tcp', 'allow', '0.0.0.0/0', null, null, 22, 22]
+          - [300, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+          - [400, 'tcp', 'allow', '108.46.136.97/32', null, null, 80, 80]
+          - [500, 'tcp', 'allow', '108.46.136.97/32', null, null, 443, 443]
+          - [600, 'tcp', 'allow', '68.119.93.72/32', null, null, 5000, 5000]
+          - [700, 'tcp', 'allow', '24.239.105.213/32', null, null, 5000, 5000]
+          - [800, 'tcp', 'allow', '68.119.93.72/32', null, null, 80, 80]
+          - [900, 'tcp', 'allow', '68.119.93.72/32', null, null, 443, 443]
+          - [1000, 'tcp', 'allow', '24.239.105.213/32', null, null, 80, 80]
+          - [1100, 'tcp', 'allow', '24.239.105.213/32', null, null, 443, 443]
+        egress:
+          - [1200, 'tcp', 'allow', '0.0.0.0/0', null, null, 22, 22]
+          - [1300, 'tcp', 'allow', '0.0.0.0/0', null, null, 80, 80]
+          - [1400, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+          - [1500, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+        state: 'present'
+      register: publicACL
+    - name: "Create private subnet ACL"
+      ec2_vpc_nacl:
+        vpc_id: "{{vpc.vpc.id}}"
+        name: ig-private-acl-m5
+        region: us-east-1
+        subnets: ['m5-ig-private-sn-1']
+        ingress:
+          # rule no, protocol, allow/deny, cidr, icmp_type, icmp_code,
+          #                                             port from, port to
+          - [100, 'tcp', 'allow', '10.10.0.0/16', null, null, 5432, 5432]
+        egress:
+          - [900, 'tcp', 'allow', '10.10.0.0/16', null, null, 5432, 5432]
+          - [1000, 'tcp', 'allow', '10.10.0.0/16', null, null, 1024, 65535]
+        state: 'present'
+      register: privateACL

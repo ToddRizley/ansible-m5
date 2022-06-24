@@ -1,0 +1,27 @@
+---
+- hosts: localhost
+  gather_facts: no
+  module_defaults:
+    group/aws:
+      region: us-east-1
+  tasks:
+    - name: Create ASG with Launch Template
+      ec2_asg:
+        name: ig-asg-m5
+        min_size: 2
+        max_size: 4
+        desired_capacity: 2
+        health_check_type: ELB
+        launch_template:
+          launch_template_name: lt-m5-ig
+        vpc_zone_identifier: 
+          - "{{publicSN1.subnet.id}}"
+        target_group_arns:
+          - "{{m5TargetGroup.target_group_arn}}"
+        health_check_period: 300
+        wait_for_instances: True
+        wait_timeout: 300
+        tags:
+          - Name: m5-ASG
+        state: present
+      register: asgm5

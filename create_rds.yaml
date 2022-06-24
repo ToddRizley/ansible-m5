@@ -1,0 +1,69 @@
+---
+- hosts: localhost
+  gather_facts: no
+  module_defaults:
+    group/aws:
+      region: "us-east-1"
+  tasks:
+    - name: Add RDS Subnet Group
+      rds_subnet_group:
+        name: ig-m5-db-sngrp-private
+        description: RDS Subnet Group
+        subnets:
+          - "{{privateSN1.subnet.id}}"
+          - "{{privateSN2.subnet.id}}"
+        state: present
+      register: rdsSubnetGrp
+    - name: Provision RDS Instance
+      rds_instance:
+        engine: postgres
+        engine_version: '13.4'
+        db_name: image_gallery
+        db_instance_identifier: image-gallery-m5
+        region: us-east-1
+        allocated_storage : 20
+        db_instance_class: db.t3.micro
+        master_username: postgres
+        master_user_password: "p0stg3s!"
+        multi_az: no
+        publicly_accessible: yes
+        port: 5432
+        db_subnet_group_name: ig-m5-db-sngrp-private
+        storage_type: 'gp2'
+        vpc_security_group_ids: 
+          - "{{ postgresSG.group_id }}"
+        wait: yes
+        tags:
+          Module: 5
+        state: present
+      register: rdsDBInstance
+  
+    - name: Spin up EC2 to run SQL against DB to config
+      ec2_instance:
+        name: "ig-m5-dev-instance"
+        key_name: "tqr-auburn-AWS"
+        vpc_subnet_id: "{{publicSN1.subnet.id}}"
+        image_id: "ami-0cff7528ff583bf9a"
+        instance_type: t3.nano
+        wait: true
+        exact_count: 1
+        security_groups:
+          - "{{nginxSGM5.group_id}}"
+          - "{{postgresTagSG.group_id}}"
+        network:
+          assign_public_ip: true
+        tags:
+          Environment: Dev
+          Module: 5
+        user_data: "{{ lookup('file', 'setup.sh') }}"
+        state: present
+      register: devEC2
+    - name: get info
+      ec2_instance_facts:
+        filters:
+          "tag:Name": ig-m5-dev-instance
+      register: facts
+    - name: Add instance public IP to host group
+      add_host: 
+        name: "{{ facts.instances[0].public_ip_address }}" 
+        groups: ec2hosts
