@@ -47,4 +47,15 @@
         state: present
       register: m5NLB
 
-      ## ROUTE 53 DNS updates for EIP
+#    - name: Add DNS record for Route53
+#      route53:
+#        zone: todd-rizley.com
+#        record: www.todd-rizley.com
+#        type: A
+#        ttl: 300
+#        value:
+#          - "{{ nlb.public_ip }}"
+#          - "{{ eip2.public_ip }}"
+#        wait: yes
+#        state: present
+#      register: dnsRecord
